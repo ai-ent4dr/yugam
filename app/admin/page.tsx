@@ -1,0 +1,4 @@
+import { redirect } from "next/navigation";
+import { requireAdmin } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+export default async function Admin(){try{await requireAdmin()}catch{redirect("/login")}const db=createAdminClient();const [{count:users},{count:analyses}]=await Promise.all([db.from("profiles").select("user_id",{count:"exact",head:true}),db.from("analyses").select("id",{count:"exact",head:true})]);return <main><nav><a className="logo" href="/">Maithri <b>AI Prediction</b></a></nav><section className="reading"><p className="eyebrow">AUTHORIZED ADMINISTRATION</p><h1>Dashboard</h1><div className="insights"><article><h3>Registered users</h3><p>{users??0}</p></article><article><h3>Total analyses</h3><p>{analyses??0}</p></article><article><h3>Users</h3><p><a href="/admin/users">View authorized records →</a></p></article></div></section></main>}

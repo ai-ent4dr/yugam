@@ -1,0 +1,4 @@
+import { redirect } from "next/navigation";
+import { requireAdmin } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+export default async function Users(){try{await requireAdmin()}catch{redirect("/login")}const db=createAdminClient();const {data}=await db.from("profiles").select("user_id,name,created_at").order("created_at",{ascending:false}).limit(100);return <main><nav><a className="logo" href="/admin">Maithri <b>Admin</b></a></nav><section className="reading"><p className="eyebrow">AUTHORIZED USERS</p><h1>Users</h1><section className="panel">{data?.length?<div className="insights">{data.map(user=><article key={user.user_id}><h3>{user.name||"Unnamed user"}</h3><p>{new Date(user.created_at).toLocaleString()}</p><p><a href={`/admin/users/${user.user_id}`}>View records →</a></p></article>)}</div>:<p className="privacy-copy">No registered profiles yet.</p>}</section></section></main>}

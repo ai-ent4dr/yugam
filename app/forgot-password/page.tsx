@@ -1,0 +1,4 @@
+"use client";
+import { useState } from "react";
+import { createBrowserClient } from "@/lib/supabase/browser";
+export default function ForgotPassword(){const [email,setEmail]=useState("");const [message,setMessage]=useState("");const send=async()=>{try{const {error}=await createBrowserClient().auth.resetPasswordForEmail(email,{redirectTo:`${location.origin}/account`});if(error)throw error;setMessage("If an account exists, a reset link has been sent.");}catch{setMessage("We could not send a reset link. Please try again.")}};return <main><nav><a className="logo" href="/">YUGMA <b>AI</b></a></nav><section className="reading"><div className="panel" style={{maxWidth:480}}><p className="eyebrow">ACCOUNT RECOVERY</p><h1>Reset password</h1><label>Email<input type="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><p className="privacy-copy">{message}</p><button className="primary wide" onClick={send}>Send reset link</button></div></section></main>}
