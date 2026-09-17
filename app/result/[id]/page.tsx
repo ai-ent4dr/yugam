@@ -1,4 +1,10 @@
-import { notFound, redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
-export default async function Result({params}:{params:Promise<{id:string}>}){const user=await getCurrentUser().catch(()=>null);if(!user)redirect("/login");const {id}=await params;const db=await createClient();const {data}=await db.from("analyses").select("id,status,created_at,compatibility_results(overall_score,values_score,relationship_score,lifestyle_score,career_score,age_score,location_score,education_score),readings(reading_type,generated_text)").eq("id",id).eq("owner_user_id",user.id).maybeSingle();if(!data)notFound();const result=Array.isArray(data.compatibility_results)?data.compatibility_results[0]:data.compatibility_results;return <main><nav><a className="logo" href="/">Maithri <b>AI Prediction</b></a></nav><section className="reading"><p className="eyebrow">SAVED READING</p><h1>{result?.overall_score ?? "—"}% compatibility</h1><p className="disclaimer">This is an AI-generated compatibility estimate based on information provided. Interpretive content is cultural and entertainment-only, not a scientific prediction.</p><section className="panel"><p>Created {new Date(data.created_at).toLocaleString()}</p><p>Status: {data.status}</p></section></section></main>}
+import { redirect } from "next/navigation";
+
+export default async function LegacyResultPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  redirect(`/analysis/${id}`);
+}
