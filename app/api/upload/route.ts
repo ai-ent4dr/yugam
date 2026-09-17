@@ -4,8 +4,13 @@ import crypto from "crypto";
 import { ALLOWED_DOC_TYPES, MAX_UPLOAD_BYTES, STORAGE_BUCKET } from "@/lib/config";
 import { rateLimit } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { generateSafeStoragePath, sanitizeFilename } from "@/lib/security";
+import { saveLocalUpload } from "@/lib/analysis-store";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 120; // 2 minutes for large 500MB uploads
 
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
@@ -17,15 +22,15 @@ export async function POST(request: NextRequest) {
   const session = jar.get("yugma_session")?.value ?? crypto.randomUUID();
 
   const ip = request.headers.get("x-forwarded-for") ?? session;
-  if (!rateLimit(`upload:${ip}`, 15)) {
+  if (!rateLimit(`upload:${ip}`, 30)) {
     return NextResponse.json({ error: "Too many uploads. Please wait a moment." }, { status: 429 });
   }
 
   let formData: FormData;
   try {
     formData = await request.formData();
-  } catch {
-    return NextResponse.json({ error: "Invalid form data." }, { status: 400 });
+  } catch (e: any) {
+    return NextResponse.json({ error: "Invalid form data or upload timed out: " + (e?.message || "") }, { status: 400 });
   }
 
   const file = formData.get("file");
@@ -93,40 +98,58 @@ export async function POST(request: NextRequest) {
   if (kind.includes("hand")) dbType = "hand_photo";
   else if (kind.includes("jataka")) dbType = "jataka_document";
 
+  // Convert File to Node Buffer
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const uploadId = crypto.randomUUID();
+
+  // 1. Always persist upload in local storage & memory for immediate admin visibility and dev reliability
   try {
-    const adminDb = createAdminClient();
-
-    // 1. Upload buffer to private Supabase Storage
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    const { error: uploadError } = await adminDb.storage
-      .from(STORAGE_BUCKET)
-      .upload(safePath, buffer, {
-        contentType: file.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      console.error("Storage upload error:", uploadError);
-      // If bucket doesn't exist yet, we still return safe mock path in dev
-    }
-
-    // 2. Record metadata in uploads table
-    await adminDb.from("uploads").insert({
-      analysis_id: analysisId,
+    await saveLocalUpload(safePath, buffer, {
+      id: uploadId,
+      analysisId,
+      kind,
       type: dbType,
-      storage_path: safePath,
-      original_filename: cleanOriginalName,
-      mime_type: file.type,
-      size_bytes: file.size,
+      mimeType: file.type,
+      originalFilename: cleanOriginalName,
+      sizeBytes: file.size,
     });
-  } catch (err) {
-    console.warn("Upload recording in database skipped (local development mode):", err);
+  } catch (localErr) {
+    console.warn("Local storage write error:", localErr);
+  }
+
+  // 2. Also persist to Supabase Storage & database if configured
+  if (isSupabaseAdminConfigured()) {
+    try {
+      const adminDb = createAdminClient();
+      const { error: uploadError } = await adminDb.storage
+        .from(STORAGE_BUCKET)
+        .upload(safePath, buffer, {
+          contentType: file.type,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error("Supabase Storage upload error:", uploadError);
+      } else {
+        await adminDb.from("uploads").insert({
+          id: uploadId,
+          analysis_id: analysisId,
+          type: dbType,
+          storage_path: safePath,
+          original_filename: cleanOriginalName,
+          mime_type: file.type,
+          size_bytes: file.size,
+        });
+      }
+    } catch (dbErr) {
+      console.warn("Supabase upload sync skipped:", dbErr);
+    }
   }
 
   return NextResponse.json({
     success: true,
+    uploadId,
     path: safePath,
     analysisId,
     kind,

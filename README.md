@@ -48,7 +48,7 @@ Yugma AI is a full-stack relationship compatibility and traditional reading plat
    FREE_ANALYSIS_LIMIT=20
    ADMIN_EMAILS=admin@example.com
    STORAGE_BUCKET=user-uploads
-   MAX_UPLOAD_BYTES=5000000
+   MAX_UPLOAD_BYTES=524288000
    APP_URL=http://localhost:3000
    ```
 
@@ -116,7 +116,7 @@ Yugma AI is a full-stack relationship compatibility and traditional reading plat
    - `FREE_ANALYSIS_LIMIT` (`20`)
    - `ADMIN_EMAILS` (`your-admin@example.com`)
    - `STORAGE_BUCKET` (`user-uploads`)
-   - `MAX_UPLOAD_BYTES` (`5000000`)
+   - `MAX_UPLOAD_BYTES` (`524288000` — 500 MB)
    - `APP_URL` (`https://your-domain.vercel.app`)
 4. Click **Deploy**.
 5. Verify live routes:

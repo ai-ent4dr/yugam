@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { getAllStoredAnalyses } from "@/lib/analysis-store";
 
 export default async function AdminDashboardPage() {
   try {
@@ -10,59 +11,83 @@ export default async function AdminDashboardPage() {
   }
 
   let totalUsers = 0;
-  let totalAnalyses = 0;
-  let todayAnalyses = 0;
-  let recentAnalyses: any[] = [];
   let recentProfiles: any[] = [];
+  const analysesMap = new Map<string, any>();
 
-  try {
-    const adminDb = createAdminClient();
+  // 1. Fetch from Supabase if configured
+  if (isSupabaseAdminConfigured()) {
+    try {
+      const adminDb = createAdminClient();
 
-    // 1. Total Analyses
-    const { count: analysesCount } = await adminDb
-      .from("analyses")
-      .select("id", { count: "exact", head: true });
-    totalAnalyses = analysesCount ?? 0;
+      // Auth Users count
+      const { data: authUsers } = await adminDb.auth.admin.listUsers({ page: 1, perPage: 100 });
+      totalUsers = authUsers?.users?.length ?? 0;
 
-    // 2. Today's Analyses
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const { count: todayCount } = await adminDb
-      .from("analyses")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", todayStart.toISOString());
-    todayAnalyses = todayCount ?? 0;
-
-    // 3. Auth Users count
-    const { data: authUsers } = await adminDb.auth.admin.listUsers({ page: 1, perPage: 100 });
-    totalUsers = authUsers?.users?.length ?? 0;
-
-    // 4. Recent analyses
-    const { data: analyses } = await adminDb
-      .from("analyses")
-      .select(
+      // Recent analyses
+      const { data: dbAnalyses } = await adminDb
+        .from("analyses")
+        .select(
+          `
+          id,
+          created_at,
+          status,
+          owner_user_id,
+          compatibility_results (overall_score),
+          analysis_people (name, person_role)
         `
-        id,
-        created_at,
-        status,
-        compatibility_results (overall_score),
-        analysis_people (name, person_role)
-      `
-      )
-      .order("created_at", { ascending: false })
-      .limit(6);
-    recentAnalyses = analyses ?? [];
+        )
+        .order("created_at", { ascending: false })
+        .limit(20);
 
-    // 5. Recent profiles
-    const { data: profiles } = await adminDb
-      .from("profiles")
-      .select("user_id, name, created_at, city")
-      .order("created_at", { ascending: false })
-      .limit(6);
-    recentProfiles = profiles ?? [];
-  } catch {
-    // Local dev mode fallback
+      if (dbAnalyses) {
+        for (const item of dbAnalyses) {
+          analysesMap.set(item.id, item);
+        }
+      }
+
+      // Recent profiles
+      const { data: profiles } = await adminDb
+        .from("profiles")
+        .select("user_id, name, created_at, city")
+        .order("created_at", { ascending: false })
+        .limit(6);
+      recentProfiles = profiles ?? [];
+    } catch {
+      // Local dev mode fallback
+    }
   }
+
+  // 2. Merge local stored analyses (anonymous entries)
+  const localList = getAllStoredAnalyses();
+  for (const rec of localList) {
+    if (!analysesMap.has(rec.id)) {
+      analysesMap.set(rec.id, {
+        id: rec.id,
+        status: rec.status ?? "completed",
+        created_at: rec.createdAt ?? new Date().toISOString(),
+        owner_user_id: rec.ownerUserId ?? null,
+        compatibility_results: { overall_score: rec.match?.score ?? 70 },
+        analysis_people: [
+          { name: rec.personA?.name ?? "Person A", person_role: "A" },
+          { name: rec.personB?.name ?? "Person B", person_role: "B" },
+        ],
+      });
+    }
+  }
+
+  const allAnalyses = Array.from(analysesMap.values()).sort(
+    (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+  );
+
+  const totalAnalyses = allAnalyses.length;
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayAnalyses = allAnalyses.filter(
+    (a) => new Date(a.created_at || 0).getTime() >= todayStart.getTime()
+  ).length;
+
+  const recentAnalyses = allAnalyses.slice(0, 8);
 
   return (
     <main>
@@ -74,7 +99,7 @@ export default async function AdminDashboardPage() {
         <div className="nav-links">
           <a href="/admin/analyses">Analyses</a>
           <a href="/admin/users">Users</a>
-          <a href="/account">User Account</a>
+          <a href="/">Home</a>
         </div>
       </nav>
 
@@ -82,7 +107,7 @@ export default async function AdminDashboardPage() {
         <p className="eyebrow">AUTHORIZED PLATFORM ADMINISTRATION</p>
         <h1 style={{ fontSize: "36px" }}>Platform Operations</h1>
         <p className="lead" style={{ fontSize: "15px" }}>
-          Administrative access is restricted to authorized administrators and is used to operate, support, moderate, secure, and maintain the platform.
+          Administrative access to inspect all submitted couple analyses, anonymous guest entries, and uploaded documents.
         </p>
       </div>
 
@@ -127,12 +152,14 @@ export default async function AdminDashboardPage() {
         <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2>Recent Couple Analyses</h2>
           <a href="/admin/analyses" className="btn-secondary" style={{ fontSize: "12px", padding: "6px 14px" }}>
-            View All Analyses →
+            View All ({totalAnalyses}) →
           </a>
         </div>
 
         {recentAnalyses.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", padding: "20px 0" }}>No analyses recorded yet.</p>
+          <p style={{ color: "var(--text-muted)", padding: "20px 0" }}>
+            No analyses recorded yet. Start by filling out a reading on the home page!
+          </p>
         ) : (
           <table className="data-table">
             <thead>
@@ -140,6 +167,7 @@ export default async function AdminDashboardPage() {
                 <th>Date</th>
                 <th>Couple Name</th>
                 <th>Compatibility Score</th>
+                <th>Type</th>
                 <th>Status</th>
                 <th>Action</th>
               </tr>
@@ -148,17 +176,30 @@ export default async function AdminDashboardPage() {
               {recentAnalyses.map((a) => {
                 const personA = (a.analysis_people || []).find((p: any) => p.person_role === "A");
                 const personB = (a.analysis_people || []).find((p: any) => p.person_role === "B");
-                const couple = personA && personB ? `${personA.name} & ${personB.name}` : "Couple";
+                const couple = personA && personB ? `${personA.name} & ${personB.name}` : "Couple Analysis";
                 const score = Array.isArray(a.compatibility_results)
                   ? a.compatibility_results[0]?.overall_score
                   : a.compatibility_results?.overall_score;
 
                 return (
                   <tr key={a.id}>
-                    <td>{new Date(a.created_at).toLocaleString()}</td>
+                    <td style={{ fontSize: "12px" }}>{new Date(a.created_at).toLocaleString()}</td>
                     <td style={{ fontWeight: 600 }}>{couple}</td>
                     <td style={{ color: "var(--gold-primary)", fontWeight: 700 }}>
                       {score !== undefined ? `${score}%` : "—"}
+                    </td>
+                    <td>
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                          background: a.owner_user_id ? "rgba(228,189,117,0.15)" : "rgba(255,255,255,0.06)",
+                          color: a.owner_user_id ? "var(--gold-primary)" : "var(--text-dim)",
+                        }}
+                      >
+                        {a.owner_user_id ? "Account" : "Anonymous"}
+                      </span>
                     </td>
                     <td>
                       <span
@@ -175,7 +216,7 @@ export default async function AdminDashboardPage() {
                       </span>
                     </td>
                     <td>
-                      <a href={`/admin/analyses/${a.id}`} className="btn-secondary" style={{ padding: "4px 10px", fontSize: "11px" }}>
+                      <a href={`/admin/analyses/${a.id}`} className="btn-secondary" style={{ padding: "4px 12px", fontSize: "11px" }}>
                         Inspect →
                       </a>
                     </td>
@@ -189,10 +230,6 @@ export default async function AdminDashboardPage() {
 
       <footer>
         <div>© {new Date().getFullYear()} YUGMA AI · Authorized Administration</div>
-        <div className="footer-links">
-          <a href="/privacy">Privacy Policy</a>
-          <a href="/terms">Terms</a>
-        </div>
       </footer>
     </main>
   );

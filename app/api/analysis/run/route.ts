@@ -7,13 +7,12 @@ import { numerologyFor, numerologyCompatibility } from "@/lib/calculations/numer
 import { canRunAnalysis, getRemainingFreeAnalyses, incrementUsage } from "@/lib/usage";
 import { rateLimit } from "@/lib/rate-limit";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { generateCompatibilityReport } from "@/lib/ai/compatibility";
 import { extractFutureThemes } from "@/lib/ai/future";
 import { REPORT_DISCLAIMER } from "@/lib/ai/prompts";
 import { STORAGE_BUCKET } from "@/lib/config";
-
-import { localAnalysisStore } from "@/lib/analysis-store";
+import { localAnalysisStore, saveStoredAnalysis, getLocalUpload } from "@/lib/analysis-store";
 
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
@@ -73,60 +72,67 @@ export async function POST(request: NextRequest) {
     const numB = numerologyFor(personB.name, personB.dob);
     const numCompat = numerologyCompatibility(numA, numB);
 
-    // 3. Prepare AI inputs & retrieve any uploaded hand or Jataka files from storage if available
+    // 3. Prepare AI inputs & retrieve any uploaded hand or Jataka files from local storage or Supabase
+    async function getMediaBuffer(storagePath?: string): Promise<Buffer | null> {
+      if (!storagePath) return null;
+      try {
+        const local = await getLocalUpload(storagePath);
+        if (local?.buffer) return local.buffer;
+      } catch {
+        // local lookup error
+      }
+
+      if (isSupabaseAdminConfigured()) {
+        try {
+          const adminDb = createAdminClient();
+          const { data } = await adminDb.storage.from(STORAGE_BUCKET).download(storagePath);
+          if (data) return Buffer.from(await data.arrayBuffer());
+        } catch {
+          // ignore
+        }
+      }
+      return null;
+    }
+
     let personAHandInline: any = undefined;
     let personBHandInline: any = undefined;
     let personAJatakaInline: any = undefined;
     let personBJatakaInline: any = undefined;
 
-    try {
-      const adminDb = createAdminClient();
-      if (personA.handPhotoPath) {
-        const { data } = await adminDb.storage.from(STORAGE_BUCKET).download(personA.handPhotoPath);
-        if (data) {
-          const buf = Buffer.from(await data.arrayBuffer());
-          personAHandInline = {
-            inlineData: { mimeType: "image/jpeg", data: buf.toString("base64") },
-          };
-        }
-      }
-      if (personB.handPhotoPath) {
-        const { data } = await adminDb.storage.from(STORAGE_BUCKET).download(personB.handPhotoPath);
-        if (data) {
-          const buf = Buffer.from(await data.arrayBuffer());
-          personBHandInline = {
-            inlineData: { mimeType: "image/jpeg", data: buf.toString("base64") },
-          };
-        }
-      }
-      if (personA.jatakaPath) {
-        const { data } = await adminDb.storage.from(STORAGE_BUCKET).download(personA.jatakaPath);
-        if (data) {
-          const buf = Buffer.from(await data.arrayBuffer());
-          const isPdf = personA.jatakaPath.endsWith(".pdf");
-          personAJatakaInline = {
-            inlineData: {
-              mimeType: isPdf ? "application/pdf" : "image/jpeg",
-              data: buf.toString("base64"),
-            },
-          };
-        }
-      }
-      if (personB.jatakaPath) {
-        const { data } = await adminDb.storage.from(STORAGE_BUCKET).download(personB.jatakaPath);
-        if (data) {
-          const buf = Buffer.from(await data.arrayBuffer());
-          const isPdf = personB.jatakaPath.endsWith(".pdf");
-          personBJatakaInline = {
-            inlineData: {
-              mimeType: isPdf ? "application/pdf" : "image/jpeg",
-              data: buf.toString("base64"),
-            },
-          };
-        }
-      }
-    } catch {
-      // Storage download error / offline development
+    const bufAHand = await getMediaBuffer(personA.handPhotoPath);
+    if (bufAHand) {
+      personAHandInline = {
+        inlineData: { mimeType: "image/jpeg", data: bufAHand.toString("base64") },
+      };
+    }
+
+    const bufBHand = await getMediaBuffer(personB.handPhotoPath);
+    if (bufBHand) {
+      personBHandInline = {
+        inlineData: { mimeType: "image/jpeg", data: bufBHand.toString("base64") },
+      };
+    }
+
+    const bufAJataka = await getMediaBuffer(personA.jatakaPath);
+    if (bufAJataka) {
+      const isPdf = personA.jatakaPath?.endsWith(".pdf");
+      personAJatakaInline = {
+        inlineData: {
+          mimeType: isPdf ? "application/pdf" : "image/jpeg",
+          data: bufAJataka.toString("base64"),
+        },
+      };
+    }
+
+    const bufBJataka = await getMediaBuffer(personB.jatakaPath);
+    if (bufBJataka) {
+      const isPdf = personB.jatakaPath?.endsWith(".pdf");
+      personBJatakaInline = {
+        inlineData: {
+          mimeType: isPdf ? "application/pdf" : "image/jpeg",
+          data: bufBJataka.toString("base64"),
+        },
+      };
     }
 
     // 4. Generate structured AI report with Google Gemini SDK
@@ -189,14 +195,15 @@ export async function POST(request: NextRequest) {
       createdAt: new Date().toISOString(),
     };
 
-    // Store in local memory cache for immediate access & dev resilience
-    localAnalysisStore.set(analysisId, completeAnalysisRecord);
+    // Store in local persistent storage & memory cache
+    saveStoredAnalysis(analysisId, completeAnalysisRecord);
 
-    try {
-      const adminDb = createAdminClient();
+    if (isSupabaseAdminConfigured()) {
+      try {
+        const adminDb = createAdminClient();
 
-      // Upsert analysis header
-      await adminDb.from("analyses").upsert({
+        // Upsert analysis header
+        await adminDb.from("analyses").upsert({
         id: analysisId,
         owner_user_id: authenticatedUser?.id ?? null,
         session_id: session,
@@ -302,8 +309,9 @@ export async function POST(request: NextRequest) {
         user_id: authenticatedUser?.id ?? null,
         consent_text_version: "1.0",
       });
-    } catch (dbErr) {
-      console.warn("Database storage skipped (local fallback mode active):", dbErr);
+      } catch (dbErr) {
+        console.warn("Database storage skipped (local fallback mode active):", dbErr);
+      }
     }
 
     const response = NextResponse.json({
