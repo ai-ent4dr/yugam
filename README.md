@@ -45,7 +45,7 @@ Yugma AI is a full-stack relationship compatibility and traditional reading plat
    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-anon-key
    SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-   FREE_ANALYSIS_LIMIT=5
+   FREE_ANALYSIS_LIMIT=20
    ADMIN_EMAILS=admin@example.com
    STORAGE_BUCKET=user-uploads
    MAX_UPLOAD_BYTES=5000000
@@ -113,7 +113,7 @@ Yugma AI is a full-stack relationship compatibility and traditional reading plat
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_SERVICE_ROLE_KEY`
-   - `FREE_ANALYSIS_LIMIT` (`5`)
+   - `FREE_ANALYSIS_LIMIT` (`20`)
    - `ADMIN_EMAILS` (`your-admin@example.com`)
    - `STORAGE_BUCKET` (`user-uploads`)
    - `MAX_UPLOAD_BYTES` (`5000000`)
