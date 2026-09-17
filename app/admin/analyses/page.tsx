@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { localAnalysisStore } from "@/lib/analysis-store";
 
 export default async function AdminAnalysesPage() {
   try {
@@ -33,6 +34,22 @@ export default async function AdminAnalysesPage() {
     analyses = data ?? [];
   } catch {
     // Local dev fallback
+  }
+
+  if (!analyses.length && localAnalysisStore.size > 0) {
+    analyses = Array.from(localAnalysisStore.values()).map((rec) => ({
+      id: rec.id,
+      status: rec.status ?? "completed",
+      created_at: rec.createdAt ?? new Date().toISOString(),
+      free_or_paid: "free",
+      owner_user_id: rec.ownerUserId ?? null,
+      session_id: rec.sessionId ?? "local-session",
+      compatibility_results: { overall_score: rec.match?.score ?? 70 },
+      analysis_people: [
+        { name: rec.personA?.name ?? "Person A", person_role: "A" },
+        { name: rec.personB?.name ?? "Person B", person_role: "B" },
+      ],
+    }));
   }
 
   return (

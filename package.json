@@ -2,7 +2,7 @@
   "name": "yugma-ai",
   "version": "0.1.0",
   "private": true,
-  "scripts": {"dev": "next dev", "build": "next build", "start": "next start", "lint": "tsc --noEmit"},
+  "scripts": {"dev": "next dev", "build": "next build", "start": "next start", "lint": "tsc --noEmit", "entries": "node scripts/inspect-entries.mjs"},
   "dependencies": {"next": "latest", "react": "latest", "react-dom": "latest", "@supabase/supabase-js": "latest", "@supabase/ssr": "latest", "@google/genai": "latest", "zod": "latest"},
   "devDependencies": {"@types/node": "latest", "@types/react": "latest", "@types/react-dom": "latest", "typescript": "latest"}
 }

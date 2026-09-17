@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { STORAGE_BUCKET } from "@/lib/config";
+import { localAnalysisStore } from "@/lib/analysis-store";
 import AdminUploadViewer from "./upload-viewer";
 
 export default async function AdminAnalysisDetailPage({
@@ -48,8 +49,60 @@ export default async function AdminAnalysisDetailPage({
     // Local dev fallback
   }
 
+  if (!analysis && localAnalysisStore.has(id)) {
+    const rec = localAnalysisStore.get(id);
+    analysis = {
+      id: rec.id,
+      status: rec.status ?? "completed",
+      created_at: rec.createdAt ?? new Date().toISOString(),
+      owner_user_id: rec.ownerUserId ?? null,
+      session_id: rec.sessionId ?? "local-session",
+      analysis_people: [
+        {
+          person_role: "A",
+          name: rec.personA?.name ?? "Person A",
+          gender: rec.personA?.gender ?? "",
+          dob: rec.personA?.dob ?? "",
+          tob: rec.personA?.tob ?? "",
+          birth_place: rec.personA?.birthPlace ?? "",
+          city: rec.personA?.city ?? "",
+        },
+        {
+          person_role: "B",
+          name: rec.personB?.name ?? "Person B",
+          gender: rec.personB?.gender ?? "",
+          dob: rec.personB?.dob ?? "",
+          tob: rec.personB?.tob ?? "",
+          birth_place: rec.personB?.birthPlace ?? "",
+          city: rec.personB?.city ?? "",
+        },
+      ],
+      compatibility_results: {
+        overall_score: rec.match?.score ?? 70,
+        values_score: rec.match?.breakdown?.values ?? 70,
+        relationship_score: rec.match?.breakdown?.relationshipGoals ?? 75,
+        lifestyle_score: rec.match?.breakdown?.lifestyle ?? 70,
+        career_score: rec.match?.breakdown?.careerGoals ?? 75,
+        age_score: rec.match?.breakdown?.ageCompatibility ?? 70,
+        location_score: rec.match?.breakdown?.location ?? 70,
+        education_score: rec.match?.breakdown?.educationInterests ?? 70,
+      },
+      uploads: [
+        ...(rec.personA?.profilePhotoPath ? [{ original_filename: "Person A Profile Photo", file_type: "profile_photo", storage_path: rec.personA.profilePhotoPath }] : []),
+        ...(rec.personA?.handPhotoPath ? [{ original_filename: "Person A Palm Photo", file_type: "hand_photo", storage_path: rec.personA.handPhotoPath }] : []),
+        ...(rec.personA?.jatakaPath ? [{ original_filename: "Person A Jataka Document", file_type: "jataka_document", storage_path: rec.personA.jatakaPath }] : []),
+        ...(rec.personB?.profilePhotoPath ? [{ original_filename: "Person B Profile Photo", file_type: "profile_photo", storage_path: rec.personB.profilePhotoPath }] : []),
+        ...(rec.personB?.handPhotoPath ? [{ original_filename: "Person B Palm Photo", file_type: "hand_photo", storage_path: rec.personB.handPhotoPath }] : []),
+        ...(rec.personB?.jatakaPath ? [{ original_filename: "Person B Jataka Document", file_type: "jataka_document", storage_path: rec.personB.jatakaPath }] : []),
+      ],
+      jataka_readings: rec.aiReport?.jatakaInsights ? [{ reading_data: { insights: rec.aiReport.jatakaInsights } }] : [],
+      numerology_readings: rec.numerology ? [{ reading_data: { personA: rec.numerology.personA, personB: rec.numerology.personB } }] : [],
+      palm_readings: rec.aiReport?.palmistryInsights ? [{ reading_data: { insights: rec.aiReport.palmistryInsights } }] : [],
+      future_readings: rec.aiReport?.futureThemes ? [{ reading_data: { futureThemes: rec.aiReport.futureThemes } }] : [],
+    };
+  }
+
   if (!analysis) {
-    // Provide dev inspection view if ID is not in remote database
     analysis = {
       id,
       status: "completed",
