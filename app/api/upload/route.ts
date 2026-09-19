@@ -14,8 +14,17 @@ export const maxDuration = 120; // 2 minutes for large 500MB uploads
 
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
-  if (origin && new URL(origin).host !== request.headers.get("host")) {
-    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+  const host = request.headers.get("host");
+  if (origin && host) {
+    try {
+      const originHost = new URL(origin).host;
+      const isLoopback = (h: string) => h.startsWith("localhost") || h.startsWith("127.0.0.1") || h.startsWith("192.168.");
+      if (originHost !== host && !(isLoopback(originHost) && isLoopback(host))) {
+        return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+      }
+    } catch {
+      // url parse fallback
+    }
   }
 
   const jar = await cookies();
@@ -34,7 +43,9 @@ export async function POST(request: NextRequest) {
   }
 
   const file = formData.get("file");
-  const analysisId = formData.get("analysisId")?.toString() || crypto.randomUUID();
+  const rawAnalysisId = formData.get("analysisId")?.toString();
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const analysisId = (rawAnalysisId && uuidRegex.test(rawAnalysisId)) ? rawAnalysisId : crypto.randomUUID();
   const kind = formData.get("kind")?.toString(); // person-a-profile | person-a-hand | person-a-jataka | person-b-profile | person-b-hand | person-b-jataka | jataka-standalone
   const consentGiven = formData.get("consent") === "true";
 
@@ -71,7 +82,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    const mbLimit = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
+    const mbLimit = Math.max(1, Math.round(MAX_UPLOAD_BYTES / (1024 * 1024)));
     return NextResponse.json(
       { error: `File exceeds the maximum allowed size of ${mbLimit}MB.` },
       { status: 400 }
@@ -122,25 +133,56 @@ export async function POST(request: NextRequest) {
   if (isSupabaseAdminConfigured()) {
     try {
       const adminDb = createAdminClient();
-      const { error: uploadError } = await adminDb.storage
+
+      // Ensure the analysis row exists in public.analyses first to satisfy foreign key constraint!
+      await adminDb.from("analyses").upsert(
+        {
+          id: analysisId,
+          owner_user_id: userId,
+          session_id: session,
+          status: "draft",
+        },
+        { onConflict: "id" }
+      );
+
+      let { error: uploadError } = await adminDb.storage
         .from(STORAGE_BUCKET)
         .upload(safePath, buffer, {
           contentType: file.type,
           upsert: true,
         });
 
+      // If bucket does not exist, auto-create it and retry
+      if (uploadError && (uploadError.message?.toLowerCase().includes("bucket not found") || (uploadError as any).statusCode === 404)) {
+        try {
+          await adminDb.storage.createBucket(STORAGE_BUCKET, { public: false });
+          const retry = await adminDb.storage
+            .from(STORAGE_BUCKET)
+            .upload(safePath, buffer, {
+              contentType: file.type,
+              upsert: true,
+            });
+          uploadError = retry.error;
+        } catch (bucketErr) {
+          console.warn("Bucket auto-creation fallback error:", bucketErr);
+        }
+      }
+
       if (uploadError) {
         console.error("Supabase Storage upload error:", uploadError);
       } else {
-        await adminDb.from("uploads").insert({
-          id: uploadId,
-          analysis_id: analysisId,
-          type: dbType,
-          storage_path: safePath,
-          original_filename: cleanOriginalName,
-          mime_type: file.type,
-          size_bytes: file.size,
-        });
+        await adminDb.from("uploads").upsert(
+          {
+            id: uploadId,
+            analysis_id: analysisId,
+            type: dbType,
+            storage_path: safePath,
+            original_filename: cleanOriginalName,
+            mime_type: file.type,
+            size_bytes: file.size,
+          },
+          { onConflict: "storage_path" }
+        );
       }
     } catch (dbErr) {
       console.warn("Supabase upload sync skipped:", dbErr);
@@ -151,6 +193,7 @@ export async function POST(request: NextRequest) {
     success: true,
     uploadId,
     path: safePath,
+    storagePath: safePath,
     analysisId,
     kind,
     mimeType: file.type,

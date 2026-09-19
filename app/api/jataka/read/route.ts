@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readJatakaDocument } from "@/lib/ai/jataka";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { getLocalUpload } from "@/lib/analysis-store";
 import { STORAGE_BUCKET } from "@/lib/config";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -27,19 +28,36 @@ export async function POST(request: NextRequest) {
 
   let inlineData: { mimeType: string; data: string } | undefined = undefined;
 
+  // 1. Try local upload store first
   try {
-    const adminDb = createAdminClient();
-    const { data, error } = await adminDb.storage.from(STORAGE_BUCKET).download(documentPath);
-    if (!error && data) {
-      const buffer = Buffer.from(await data.arrayBuffer());
-      const isPdf = documentPath.endsWith(".pdf");
+    const local = await getLocalUpload(documentPath);
+    if (local?.buffer) {
+      const isPdf = documentPath.endsWith(".pdf") || local.meta.mimeType === "application/pdf";
       inlineData = {
         mimeType: isPdf ? "application/pdf" : "image/jpeg",
-        data: buffer.toString("base64"),
+        data: local.buffer.toString("base64"),
       };
     }
-  } catch (err) {
-    console.warn("Storage download notice:", err);
+  } catch {
+    // local store lookup skipped
+  }
+
+  // 2. Fall back to Supabase Storage if configured
+  if (!inlineData && isSupabaseAdminConfigured()) {
+    try {
+      const adminDb = createAdminClient();
+      const { data, error } = await adminDb.storage.from(STORAGE_BUCKET).download(documentPath);
+      if (!error && data) {
+        const buffer = Buffer.from(await data.arrayBuffer());
+        const isPdf = documentPath.endsWith(".pdf");
+        inlineData = {
+          mimeType: isPdf ? "application/pdf" : "image/jpeg",
+          data: buffer.toString("base64"),
+        };
+      }
+    } catch (err) {
+      console.warn("Storage download notice:", err);
+    }
   }
 
   try {

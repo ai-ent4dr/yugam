@@ -4,6 +4,9 @@ import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/adm
 import { getStoredAnalysis, getAllStoredUploads } from "@/lib/analysis-store";
 import AdminUploadViewer from "./upload-viewer";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function AdminAnalysisDetailPage({
   params,
 }: {

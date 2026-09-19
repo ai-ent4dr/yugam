@@ -2,6 +2,10 @@ import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getAllStoredAnalyses } from "@/lib/analysis-store";
+import AnalysesTable from "./analyses/analyses-table";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function AdminDashboardPage() {
   try {
@@ -11,7 +15,6 @@ export default async function AdminDashboardPage() {
   }
 
   let totalUsers = 0;
-  let recentProfiles: any[] = [];
   const analysesMap = new Map<string, any>();
 
   // 1. Fetch from Supabase if configured
@@ -33,25 +36,17 @@ export default async function AdminDashboardPage() {
           status,
           owner_user_id,
           compatibility_results (overall_score),
-          analysis_people (name, person_role)
+          analysis_people (name, person_role, city, dob)
         `
         )
         .order("created_at", { ascending: false })
-        .limit(20);
+        .limit(50);
 
       if (dbAnalyses) {
         for (const item of dbAnalyses) {
           analysesMap.set(item.id, item);
         }
       }
-
-      // Recent profiles
-      const { data: profiles } = await adminDb
-        .from("profiles")
-        .select("user_id, name, created_at, city")
-        .order("created_at", { ascending: false })
-        .limit(6);
-      recentProfiles = profiles ?? [];
     } catch {
       // Local dev mode fallback
     }
@@ -68,8 +63,8 @@ export default async function AdminDashboardPage() {
         owner_user_id: rec.ownerUserId ?? null,
         compatibility_results: { overall_score: rec.match?.score ?? 70 },
         analysis_people: [
-          { name: rec.personA?.name ?? "Person A", person_role: "A" },
-          { name: rec.personB?.name ?? "Person B", person_role: "B" },
+          { name: rec.personA?.name ?? "Person A", person_role: "A", city: rec.personA?.city, dob: rec.personA?.dob },
+          { name: rec.personB?.name ?? "Person B", person_role: "B", city: rec.personB?.city, dob: rec.personB?.dob },
         ],
       });
     }
@@ -81,13 +76,24 @@ export default async function AdminDashboardPage() {
 
   const totalAnalyses = allAnalyses.length;
 
+  // Calculate unique individuals from searches
+  const uniqueNames = new Set<string>();
+  for (const a of allAnalyses) {
+    const people = a.analysis_people || [];
+    people.forEach((p: any) => {
+      if (p.name && p.name !== "Person A" && p.name !== "Person B") {
+        uniqueNames.add(p.name.trim().toLowerCase());
+      }
+    });
+  }
+
+  const totalProfilesCount = Math.max(totalUsers, uniqueNames.size);
+
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayAnalyses = allAnalyses.filter(
     (a) => new Date(a.created_at || 0).getTime() >= todayStart.getTime()
   ).length;
-
-  const recentAnalyses = allAnalyses.slice(0, 8);
 
   return (
     <main>
@@ -98,7 +104,7 @@ export default async function AdminDashboardPage() {
         </a>
         <div className="nav-links">
           <a href="/admin/analyses">Analyses</a>
-          <a href="/admin/users">Users</a>
+          <a href="/admin/users">Users & Profiles</a>
           <a href="/">Home</a>
         </div>
       </nav>
@@ -107,7 +113,7 @@ export default async function AdminDashboardPage() {
         <p className="eyebrow">AUTHORIZED PLATFORM ADMINISTRATION</p>
         <h1 style={{ fontSize: "36px" }}>Platform Operations</h1>
         <p className="lead" style={{ fontSize: "15px" }}>
-          Administrative access to inspect all submitted couple analyses, anonymous guest entries, and uploaded documents.
+          Administrative access to inspect all submitted couple analyses, searched profiles, anonymous guest entries, and uploaded documents.
         </p>
       </div>
 
@@ -116,11 +122,13 @@ export default async function AdminDashboardPage() {
         <div className="panel">
           <span className="step-label">COMMUNITY</span>
           <p style={{ fontSize: "36px", fontWeight: 800, color: "var(--gold-primary)", margin: "4px 0" }}>
-            {totalUsers}
+            {totalProfilesCount}
           </p>
-          <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>Registered Accounts</p>
+          <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            {totalUsers > 0 ? `${totalUsers} Accounts · ` : ""}{uniqueNames.size} Profiles & Names
+          </p>
           <a href="/admin/users" style={{ fontSize: "12px", color: "var(--gold-hover)", display: "inline-block", marginTop: "8px" }}>
-            View all users →
+            View all profiles & users →
           </a>
         </div>
 
@@ -129,7 +137,7 @@ export default async function AdminDashboardPage() {
           <p style={{ fontSize: "36px", fontWeight: 800, color: "var(--gold-primary)", margin: "4px 0" }}>
             {totalAnalyses}
           </p>
-          <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>Total Analyses Conducted</p>
+          <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>Total Couple Analyses</p>
           <a href="/admin/analyses" style={{ fontSize: "12px", color: "var(--gold-hover)", display: "inline-block", marginTop: "8px" }}>
             View all analyses →
           </a>
@@ -147,85 +155,16 @@ export default async function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Recent Analyses Table */}
+      {/* Couple Analyses Table with Live Search */}
       <div className="panel">
-        <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2>Recent Couple Analyses</h2>
+        <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h2>All Searched Couple Analyses</h2>
           <a href="/admin/analyses" className="btn-secondary" style={{ fontSize: "12px", padding: "6px 14px" }}>
-            View All ({totalAnalyses}) →
+            Audit View ({totalAnalyses}) →
           </a>
         </div>
 
-        {recentAnalyses.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", padding: "20px 0" }}>
-            No analyses recorded yet. Start by filling out a reading on the home page!
-          </p>
-        ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Couple Name</th>
-                <th>Compatibility Score</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentAnalyses.map((a) => {
-                const personA = (a.analysis_people || []).find((p: any) => p.person_role === "A");
-                const personB = (a.analysis_people || []).find((p: any) => p.person_role === "B");
-                const couple = personA && personB ? `${personA.name} & ${personB.name}` : "Couple Analysis";
-                const score = Array.isArray(a.compatibility_results)
-                  ? a.compatibility_results[0]?.overall_score
-                  : a.compatibility_results?.overall_score;
-
-                return (
-                  <tr key={a.id}>
-                    <td style={{ fontSize: "12px" }}>{new Date(a.created_at).toLocaleString()}</td>
-                    <td style={{ fontWeight: 600 }}>{couple}</td>
-                    <td style={{ color: "var(--gold-primary)", fontWeight: 700 }}>
-                      {score !== undefined ? `${score}%` : "—"}
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          padding: "2px 6px",
-                          borderRadius: "4px",
-                          background: a.owner_user_id ? "rgba(228,189,117,0.15)" : "rgba(255,255,255,0.06)",
-                          color: a.owner_user_id ? "var(--gold-primary)" : "var(--text-dim)",
-                        }}
-                      >
-                        {a.owner_user_id ? "Account" : "Anonymous"}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          textTransform: "capitalize",
-                          fontSize: "11px",
-                          padding: "2px 8px",
-                          borderRadius: "4px",
-                          background: a.status === "completed" ? "rgba(46, 204, 113, 0.15)" : "rgba(255, 255, 255, 0.1)",
-                          color: a.status === "completed" ? "#2ecc71" : "var(--text-muted)",
-                        }}
-                      >
-                        {a.status}
-                      </span>
-                    </td>
-                    <td>
-                      <a href={`/admin/analyses/${a.id}`} className="btn-secondary" style={{ padding: "4px 12px", fontSize: "11px" }}>
-                        Inspect →
-                      </a>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+        <AnalysesTable initialAnalyses={allAnalyses} />
       </div>
 
       <footer>

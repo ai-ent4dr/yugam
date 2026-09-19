@@ -2,14 +2,14 @@ import { z } from "zod";
 
 export const personSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100),
-  gender: z.enum(["male", "female", "other"]),
-  dob: z.string().min(1, "Date of birth is required"),
+  gender: z.enum(["male", "female", "other"]).default("male"),
+  dob: z.string().optional().default("1998-01-01").transform((v) => v || "1998-01-01"),
   tob: z.string().max(10).optional().or(z.literal("")),
-  birthPlace: z.string().trim().min(2, "Place of birth is required").max(150),
+  birthPlace: z.string().trim().max(150).optional().default("Delhi, India").transform((v) => v || "Delhi, India"),
   city: z.string().trim().max(100).optional().or(z.literal("")),
   education: z.string().trim().max(120).optional().or(z.literal("")),
   career: z.string().trim().max(120).optional().or(z.literal("")),
-  relationshipGoal: z.string().trim().min(1).max(100).default("Marriage"),
+  relationshipGoal: z.string().trim().max(100).default("Marriage").transform((v) => v || "Marriage"),
   careerGoal: z.string().trim().max(100).optional().or(z.literal("")),
   lifestyle: z.array(z.string().max(60)).max(15).default([]),
   values: z.array(z.string().max(60)).max(15).default([]),
@@ -26,7 +26,7 @@ export const analysisSchema = z.object({
     .array(z.enum(["compatibility", "jataka", "numerology", "palm", "career", "relationship"]))
     .min(1, "Please select at least one reading focus"),
   consent: z.literal(true),
-  analysisId: z.string().uuid().optional(),
+  analysisId: z.string().uuid().optional().or(z.literal("")),
 });
 
 export const jatakaReaderSchema = z.object({

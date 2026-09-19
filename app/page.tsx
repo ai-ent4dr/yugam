@@ -1,41 +1,84 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import type { PersonProfile } from "@/lib/calculations/compatibility";
+import { useState, useEffect, useRef } from "react";
 
-const PRESET_CHOICES = {
-  values: ["Trust & Loyalty", "Family Bond", "Ambition & Growth", "Kindness", "Independence", "Spiritual Depth", "Open Communication"],
-  lifestyle: ["Active Fitness", "Travel & Adventure", "Quiet Home Life", "Reading & Arts", "Social Gatherings", "Outdoor Nature"],
-  goals: ["Marriage", "Long-term relationship", "Life companionship", "Dating / explore"],
-};
-
-type FormPerson = PersonProfile & {
+interface FormPerson {
+  name: string;
+  gender: "male" | "female" | "other";
+  dob: string;
+  tob?: string;
+  birthPlace: string;
+  city?: string;
+  education?: string;
+  career?: string;
+  relationshipGoal: string;
+  careerGoal?: string;
+  values: string[];
+  lifestyle: string[];
   profilePhotoPath?: string;
   handPhotoPath?: string;
   jatakaPath?: string;
+}
+
+const PRESET_CHOICES = {
+  goals: [
+    "Marriage",
+    "Companionship",
+    "Shared Spiritual Journey",
+    "Family Building",
+    "Long-term Partnership",
+  ],
+  values: [
+    "Family Harmony",
+    "Ambition & Growth",
+    "Honesty & Trust",
+    "Mutual Respect",
+    "Cultural Traditions",
+    "Compassion & Service",
+    "Financial Prudence",
+    "Personal Independence",
+    "Lifelong Learning",
+  ],
+  lifestyle: [
+    "Early Riser",
+    "Night Owl",
+    "Vegetarian",
+    "Non-Vegetarian",
+    "Fitness Enthusiast",
+    "Homebody",
+    "Frequent Traveler",
+    "Non-Smoker",
+    "Moderate Socializer",
+  ],
 };
 
-const initialPerson = (gender: PersonProfile["gender"]): FormPerson => ({
-  name: "",
-  gender,
-  dob: "",
-  tob: "",
-  birthPlace: "",
-  city: "",
-  education: "",
-  career: "",
-  relationshipGoal: "Marriage",
-  careerGoal: "Continuous growth & work-life harmony",
-  values: ["Trust & Loyalty", "Family Bond"],
-  lifestyle: ["Travel & Adventure", "Quiet Home Life"],
-  profilePhotoPath: "",
-  handPhotoPath: "",
-  jatakaPath: "",
-});
-
 export default function HomePage() {
-  const [personA, setPersonA] = useState<FormPerson>(initialPerson("male"));
-  const [personB, setPersonB] = useState<FormPerson>(initialPerson("female"));
+  const [personA, setPersonA] = useState<FormPerson>({
+    name: "",
+    gender: "male",
+    dob: "",
+    tob: "",
+    birthPlace: "",
+    city: "",
+    relationshipGoal: "Marriage",
+    careerGoal: "",
+    values: ["Family Harmony", "Mutual Respect"],
+    lifestyle: ["Vegetarian", "Non-Smoker"],
+  });
+
+  const [personB, setPersonB] = useState<FormPerson>({
+    name: "",
+    gender: "female",
+    dob: "",
+    tob: "",
+    birthPlace: "",
+    city: "",
+    relationshipGoal: "Marriage",
+    careerGoal: "",
+    values: ["Family Harmony", "Honesty & Trust"],
+    lifestyle: ["Vegetarian", "Non-Smoker"],
+  });
+
   const [modules, setModules] = useState<string[]>([
     "compatibility",
     "jataka",
@@ -44,23 +87,26 @@ export default function HomePage() {
     "career",
     "relationship",
   ]);
-  const [consent, setConsent] = useState(false);
-  const [remaining, setRemaining] = useState<number>(5);
+
+  const [consent, setConsent] = useState(true);
   const [analysisId, setAnalysisId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [stageText, setStageText] = useState("");
   const [error, setError] = useState("");
-  const [signupPrompt, setSignupPrompt] = useState(false);
   const [result, setResult] = useState<any>(null);
 
-  // Initialize draft analysis & fetch remaining free readings
+  // Upload tracking states: previews, uploading status & filenames
+  const [uploadingState, setUploadingState] = useState<Record<string, boolean>>({});
+  const [uploadPreviews, setUploadPreviews] = useState<Record<string, string>>({});
+  const [uploadedNames, setUploadedNames] = useState<Record<string, string>>({});
+
+  // Initialize draft analysis with immediate UUID fallback so uploads are always tied to a valid UUID
   useEffect(() => {
-    fetch("/api/usage")
-      .then((r) => r.json())
-      .then((data) => {
-        if (typeof data.remaining === "number") setRemaining(data.remaining);
-      })
-      .catch(() => undefined);
+    let clientDraftId = "";
+    try {
+      clientDraftId = crypto.randomUUID();
+      setAnalysisId(clientDraftId);
+    } catch {}
 
     fetch("/api/analysis/create", { method: "POST" })
       .then((r) => r.json())
@@ -80,15 +126,30 @@ export default function HomePage() {
     file: File
   ) => {
     setError("");
-    if (!consent) {
-      setError("Please confirm consent below before uploading personal files or images.");
-      return;
+    // Ensure consent is acknowledged upon attaching files
+    setConsent(true);
+
+    const tileKey = `${personKey}-${kind}`;
+    setUploadingState((prev) => ({ ...prev, [tileKey]: true }));
+    setUploadedNames((prev) => ({ ...prev, [tileKey]: file.name }));
+
+    // Instant local preview for images
+    if (file.type.startsWith("image/")) {
+      try {
+        const localPreview = URL.createObjectURL(file);
+        setUploadPreviews((prev) => ({ ...prev, [tileKey]: localPreview }));
+      } catch {}
+    }
+
+    const activeAnalysisId = analysisId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "");
+    if (!analysisId && activeAnalysisId) {
+      setAnalysisId(activeAnalysisId);
     }
 
     const uploadKind = `person-${personKey.toLowerCase()}-${kind}`;
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("analysisId", analysisId || "default-draft");
+    formData.append("analysisId", activeAnalysisId);
     formData.append("kind", uploadKind);
     formData.append("consent", "true");
 
@@ -99,6 +160,10 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
+
+      if (data.analysisId && !analysisId) {
+        setAnalysisId(data.analysisId);
+      }
 
       if (personKey === "A") {
         setPersonA((prev) => ({
@@ -117,6 +182,8 @@ export default function HomePage() {
       }
     } catch (err: any) {
       setError(err.message || "Failed to upload file");
+    } finally {
+      setUploadingState((prev) => ({ ...prev, [tileKey]: false }));
     }
   };
 
@@ -126,50 +193,58 @@ export default function HomePage() {
       setError("Please confirm consent before continuing.");
       return;
     }
-    if (!personA.name || !personA.dob || !personA.birthPlace) {
-      setError("Please complete all required fields for Person A (Name, Date of Birth, Birth Place).");
+    if (!personA.name?.trim()) {
+      setError("Please enter a name for Person A.");
       return;
     }
-    if (!personB.name || !personB.dob || !personB.birthPlace) {
-      setError("Please complete all required fields for Person B (Name, Date of Birth, Birth Place).");
+    if (!personB.name?.trim()) {
+      setError("Please enter a name for Person B.");
       return;
     }
+
+    // Auto-fill sensible fallback defaults if user only entered names for a quick compatibility search
+    const preparedA = {
+      ...personA,
+      name: personA.name.trim(),
+      dob: personA.dob || "1997-05-15",
+      birthPlace: personA.birthPlace?.trim() || "Delhi, India",
+    };
+
+    const preparedB = {
+      ...personB,
+      name: personB.name.trim(),
+      dob: personB.dob || "1998-08-20",
+      birthPlace: personB.birthPlace?.trim() || "Mumbai, India",
+    };
 
     setBusy(true);
-    setSignupPrompt(false);
     setStageText("Reviewing relationship information…");
 
-    const timer1 = setTimeout(() => setStageText("Comparing compatibility factors & values…"), 900);
-    const timer2 = setTimeout(() => setStageText("Generating AI cultural interpretation & report…"), 2000);
+    const timer1 = setTimeout(() => setStageText("Comparing compatibility factors & values…"), 800);
+    const timer2 = setTimeout(() => setStageText("Generating AI cultural interpretation & report…"), 1800);
 
     try {
       const res = await fetch("/api/analysis/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          personA,
-          personB,
+          personA: preparedA,
+          personB: preparedB,
           modules,
           consent: true,
-          analysisId,
+          analysisId: analysisId || undefined,
         }),
       });
 
       const json = await res.json();
 
       if (!res.ok) {
-        if (json.signupRequired) {
-          setSignupPrompt(true);
-        }
         throw new Error(json.error || "Could not generate analysis.");
       }
 
       setResult(json);
-      if (typeof json.remaining === "number") {
-        setRemaining(json.remaining);
-      }
 
-      // Scroll to report smoothly
+      // Smoothly scroll to report
       setTimeout(() => {
         document.getElementById("results-view")?.scrollIntoView({ behavior: "smooth" });
       }, 300);
@@ -179,7 +254,6 @@ export default function HomePage() {
       clearTimeout(timer1);
       clearTimeout(timer2);
       setBusy(false);
-      setStageText("");
     }
   };
 
@@ -189,13 +263,12 @@ export default function HomePage() {
       <nav>
         <a className="logo" href="/">
           YUGMA <b>AI</b>
-          <span className="tag">BETA</span>
         </a>
         <div className="nav-links">
           <a href="/jataka-reader">Jataka Reader</a>
           <a href="/history">History</a>
-          <a href="/privacy">Privacy</a>
-          <a href="/login" className="nav-btn">Sign In</a>
+          <a href="/admin">Admin Portal</a>
+          <a href="/account" className="nav-btn">Account</a>
         </div>
       </nav>
 
@@ -212,13 +285,13 @@ export default function HomePage() {
 
         <div className="hero-actions">
           <a href="#reading-form" className="btn-primary">
-            Start Free Reading <span>→</span>
+            Start Reading <span>→</span>
           </a>
           <a href="/jataka-reader" className="btn-secondary">
             Upload Single Jataka Chart
           </a>
-          <div className="allowance-badge">
-            ✦ Free readings remaining: <b>{remaining}</b>
+          <div className="allowance-badge" style={{ borderColor: "#2ecc71", color: "#2ecc71" }}>
+            ✦ Unlimited Free Readings Active
           </div>
         </div>
       </header>
@@ -227,7 +300,7 @@ export default function HomePage() {
       <section className="trust-bar">
         <div>
           <b>Your information is protected.</b>
-          <p>We use secure transport, private storage, and strict access controls. Your insights are yours to explore.</p>
+          <p>We use secure transport, private storage, and strict access controls. Upload files up to 500 MB securely.</p>
         </div>
         <div>
           <b>Strictly Non-Judgmental</b>
@@ -244,17 +317,25 @@ export default function HomePage() {
         <div className="form-grid">
           {/* PERSON A */}
           <PersonSection
+            role="A"
             title="PERSON A"
             person={personA}
             update={setPersonA}
+            uploadingState={uploadingState}
+            uploadPreviews={uploadPreviews}
+            uploadedNames={uploadedNames}
             onUpload={(kind, file) => handleFileUpload("A", kind, file)}
           />
 
           {/* PERSON B */}
           <PersonSection
+            role="B"
             title="PERSON B"
             person={personB}
             update={setPersonB}
+            uploadingState={uploadingState}
+            uploadPreviews={uploadPreviews}
+            uploadedNames={uploadedNames}
             onUpload={(kind, file) => handleFileUpload("B", kind, file)}
           />
         </div>
@@ -302,18 +383,6 @@ export default function HomePage() {
 
           {error && <p className="error-text">⚠ {error}</p>}
 
-          {signupPrompt && (
-            <div className="disclaimer-box" style={{ borderColor: "#f39c12", margin: "16px 0" }}>
-              <p style={{ fontWeight: 600, color: "#f39c12" }}>Your free readings are complete.</p>
-              <p style={{ marginTop: "6px" }}>
-                Create your free account to continue saving analyses and accessing deeper compatibility readings.
-              </p>
-              <a href="/signup" className="btn-primary" style={{ marginTop: "12px", display: "inline-block" }}>
-                Create Free Account →
-              </a>
-            </div>
-          )}
-
           <div style={{ marginTop: "24px", display: "flex", alignItems: "center", gap: "16px" }}>
             <button
               type="button"
@@ -341,6 +410,103 @@ export default function HomePage() {
       {/* Results Presentation */}
       {result && (
         <section id="results-view" style={{ marginTop: "60px" }}>
+          {/* Real-time Submissions & Uploaded Profiles Card */}
+          <div className="panel" style={{ marginBottom: "24px", background: "rgba(10, 17, 34, 0.95)", border: "1px solid var(--border-subtle)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+              <div>
+                <span className="step-label" style={{ color: "#2ecc71" }}>✓ REAL-TIME ANALYSIS RECORDED</span>
+                <h2 style={{ fontSize: "24px", margin: "4px 0" }}>{personA.name} & {personB.name}</h2>
+              </div>
+              <a href="/admin/analyses" className="btn-secondary" style={{ fontSize: "12px", padding: "8px 16px" }}>
+                Inspect in Admin Portal →
+              </a>
+            </div>
+
+            <div className="form-grid" style={{ marginTop: "12px" }}>
+              {/* Person A Verified Card */}
+              <div style={{ background: "#050913", padding: "16px", borderRadius: "10px", border: "1px solid var(--border-subtle)", display: "flex", gap: "16px", alignItems: "center" }}>
+                {uploadPreviews["A-profile"] || personA.profilePhotoPath ? (
+                  <img
+                    src={uploadPreviews["A-profile"] || `/api/admin/uploads/raw?path=${encodeURIComponent(personA.profilePhotoPath || "")}`}
+                    alt={personA.name}
+                    style={{ width: "64px", height: "64px", borderRadius: "50%", objectFit: "cover", border: "2px solid #2ecc71", flexShrink: 0 }}
+                  />
+                ) : (
+                  <div style={{ width: "64px", height: "64px", borderRadius: "50%", background: "#10182b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", flexShrink: 0 }}>
+                    👤
+                  </div>
+                )}
+                <div style={{ flex: 1, fontSize: "13px" }}>
+                  <b style={{ fontSize: "16px", color: "var(--gold-primary)" }}>{personA.name}</b>
+                  <p style={{ color: "var(--text-dim)", margin: "2px 0" }}>
+                    DOB: <b>{personA.dob}</b> {personA.tob ? `· ${personA.tob}` : ""}
+                  </p>
+                  <p style={{ color: "var(--text-dim)" }}>
+                    Place: <b>{personA.birthPlace}</b> {personA.city ? `(${personA.city})` : ""}
+                  </p>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+                    {personA.profilePhotoPath && (
+                      <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>
+                        ✓ Photo
+                      </span>
+                    )}
+                    {personA.handPhotoPath && (
+                      <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>
+                        ✓ Palm
+                      </span>
+                    )}
+                    {personA.jatakaPath && (
+                      <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>
+                        ✓ Kundli
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Person B Verified Card */}
+              <div style={{ background: "#050913", padding: "16px", borderRadius: "10px", border: "1px solid var(--border-subtle)", display: "flex", gap: "16px", alignItems: "center" }}>
+                {uploadPreviews["B-profile"] || personB.profilePhotoPath ? (
+                  <img
+                    src={uploadPreviews["B-profile"] || `/api/admin/uploads/raw?path=${encodeURIComponent(personB.profilePhotoPath || "")}`}
+                    alt={personB.name}
+                    style={{ width: "64px", height: "64px", borderRadius: "50%", objectFit: "cover", border: "2px solid #2ecc71", flexShrink: 0 }}
+                  />
+                ) : (
+                  <div style={{ width: "64px", height: "64px", borderRadius: "50%", background: "#10182b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", flexShrink: 0 }}>
+                    👤
+                  </div>
+                )}
+                <div style={{ flex: 1, fontSize: "13px" }}>
+                  <b style={{ fontSize: "16px", color: "var(--gold-primary)" }}>{personB.name}</b>
+                  <p style={{ color: "var(--text-dim)", margin: "2px 0" }}>
+                    DOB: <b>{personB.dob}</b> {personB.tob ? `· ${personB.tob}` : ""}
+                  </p>
+                  <p style={{ color: "var(--text-dim)" }}>
+                    Place: <b>{personB.birthPlace}</b> {personB.city ? `(${personB.city})` : ""}
+                  </p>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+                    {personB.profilePhotoPath && (
+                      <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>
+                        ✓ Photo
+                      </span>
+                    )}
+                    {personB.handPhotoPath && (
+                      <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>
+                        ✓ Palm
+                      </span>
+                    )}
+                    {personB.jatakaPath && (
+                      <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>
+                        ✓ Kundli
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="report-hero">
             <p className="eyebrow">YUGMA AI COMPATIBILITY ESTIMATE</p>
             <div className="score-display">
@@ -473,14 +639,22 @@ export default function HomePage() {
 
 // Subcomponent for Person A / B Form
 function PersonSection({
+  role,
   title,
   person,
   update,
+  uploadingState,
+  uploadPreviews,
+  uploadedNames,
   onUpload,
 }: {
+  role: "A" | "B";
   title: "PERSON A" | "PERSON B";
   person: FormPerson;
   update: React.Dispatch<React.SetStateAction<FormPerson>>;
+  uploadingState: Record<string, boolean>;
+  uploadPreviews: Record<string, string>;
+  uploadedNames: Record<string, string>;
   onUpload: (kind: "profile" | "hand" | "jataka", file: File) => void;
 }) {
   const profileRef = useRef<HTMLInputElement>(null);
@@ -496,6 +670,21 @@ function PersonSection({
     const updated = list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
     setField(key, updated);
   };
+
+  const isProfileUploading = uploadingState[`${role}-profile`];
+  const profilePreview = uploadPreviews[`${role}-profile`];
+  const profileFileName = uploadedNames[`${role}-profile`];
+  const isProfileUploaded = Boolean(person.profilePhotoPath || profilePreview);
+
+  const isHandUploading = uploadingState[`${role}-hand`];
+  const handPreview = uploadPreviews[`${role}-hand`];
+  const handFileName = uploadedNames[`${role}-hand`];
+  const isHandUploaded = Boolean(person.handPhotoPath || handPreview);
+
+  const isJatakaUploading = uploadingState[`${role}-jataka`];
+  const jatakaPreview = uploadPreviews[`${role}-jataka`];
+  const jatakaFileName = uploadedNames[`${role}-jataka`];
+  const isJatakaUploaded = Boolean(person.jatakaPath || jatakaPreview);
 
   return (
     <div className="panel">
@@ -526,10 +715,9 @@ function PersonSection({
         </div>
 
         <div className="form-group">
-          <label>Date of Birth *</label>
+          <label>Date of Birth <em>optional</em></label>
           <input
             type="date"
-            required
             value={person.dob}
             onChange={(e) => setField("dob", e.target.value)}
           />
@@ -545,10 +733,9 @@ function PersonSection({
         </div>
 
         <div className="form-group">
-          <label>Birth Place *</label>
+          <label>Birth Place <em>optional</em></label>
           <input
             type="text"
-            required
             placeholder="City, State / Country"
             value={person.birthPlace}
             onChange={(e) => setField("birthPlace", e.target.value)}
@@ -606,20 +793,55 @@ function PersonSection({
       </div>
 
       {/* Optional Uploads */}
-      <div className="upload-group">
-        <p className="upload-title">Optional Media & Charts</p>
+      <div className="upload-group" style={{ marginTop: "20px" }}>
+        <p className="upload-title" style={{ fontWeight: 600, fontSize: "13px", color: "var(--text-main)", marginBottom: "8px" }}>
+          Attach Photos & Traditional Documents (Optional, up to 500MB)
+        </p>
         <div className="upload-grid">
           {/* Profile Photo */}
           <div
-            className={`upload-tile ${person.profilePhotoPath ? "uploaded" : ""}`}
+            className={`upload-tile ${isProfileUploaded ? "uploaded" : ""}`}
             onClick={() => profileRef.current?.click()}
+            style={{ cursor: "pointer" }}
           >
-            <span className="icon">📷</span>
-            <p className="name">Profile Photo</p>
-            <p className="status">{person.profilePhotoPath ? "Uploaded ✓" : "Tap to add"}</p>
+            {isProfileUploaded && (
+              <div className="upload-tile-tick" title="Photo Uploaded ✓">
+                ✓
+              </div>
+            )}
+
+            {isProfileUploading ? (
+              <>
+                <div className="upload-tile-spinner" />
+                <p className="name">Uploading...</p>
+                <p className="status">Please wait...</p>
+              </>
+            ) : isProfileUploaded ? (
+              <>
+                {profilePreview ? (
+                  <img src={profilePreview} alt="Profile Preview" className="upload-preview-thumb" />
+                ) : (
+                  <span className="icon" style={{ color: "#2ecc71" }}>📷</span>
+                )}
+                <p className="name" style={{ color: "#2ecc71", fontWeight: 700 }}>
+                  Photo Attached ✓
+                </p>
+                <p className="status" style={{ color: "#2ecc71", fontWeight: 600, fontSize: "10px" }}>
+                  {profileFileName ? `${profileFileName.slice(0, 16)}...` : "Uploaded ✓ (Tap to change)"}
+                </p>
+              </>
+            ) : (
+              <>
+                <span className="icon">📷</span>
+                <p className="name">Profile Photo</p>
+                <p className="status">Tap to upload photo</p>
+              </>
+            )}
+
             <input
               ref={profileRef}
               type="file"
+              style={{ display: "none" }}
               accept="image/jpeg,image/png,image/webp"
               onChange={(e) => e.target.files?.[0] && onUpload("profile", e.target.files[0])}
             />
@@ -627,15 +849,46 @@ function PersonSection({
 
           {/* Palm/Hand Photo */}
           <div
-            className={`upload-tile ${person.handPhotoPath ? "uploaded" : ""}`}
+            className={`upload-tile ${isHandUploaded ? "uploaded" : ""}`}
             onClick={() => handRef.current?.click()}
+            style={{ cursor: "pointer" }}
           >
-            <span className="icon">✋</span>
-            <p className="name">Hand / Palm</p>
-            <p className="status">{person.handPhotoPath ? "Uploaded ✓" : "For palmistry"}</p>
+            {isHandUploaded && (
+              <div className="upload-tile-tick" title="Hand Photo Uploaded ✓">
+                ✓
+              </div>
+            )}
+
+            {isHandUploading ? (
+              <>
+                <div className="upload-tile-spinner" />
+                <p className="name">Uploading...</p>
+                <p className="status">Please wait...</p>
+              </>
+            ) : isHandUploaded ? (
+              <>
+                {handPreview ? (
+                  <img src={handPreview} alt="Hand Preview" className="upload-preview-thumb" />
+                ) : (
+                  <span className="icon" style={{ color: "#2ecc71" }}>✋</span>
+                )}
+                <p className="name" style={{ color: "#2ecc71", fontWeight: 700 }}>Palm Scanned ✓</p>
+                <p className="status" style={{ color: "#2ecc71", fontWeight: 600, fontSize: "10px" }}>
+                  {handFileName ? `${handFileName.slice(0, 16)}...` : "Uploaded ✓ (Tap to change)"}
+                </p>
+              </>
+            ) : (
+              <>
+                <span className="icon">✋</span>
+                <p className="name">Hand / Palm</p>
+                <p className="status">For palmistry insights</p>
+              </>
+            )}
+
             <input
               ref={handRef}
               type="file"
+              style={{ display: "none" }}
               accept="image/jpeg,image/png,image/webp"
               onChange={(e) => e.target.files?.[0] && onUpload("hand", e.target.files[0])}
             />
@@ -643,15 +896,46 @@ function PersonSection({
 
           {/* Jataka Document */}
           <div
-            className={`upload-tile ${person.jatakaPath ? "uploaded" : ""}`}
+            className={`upload-tile ${isJatakaUploaded ? "uploaded" : ""}`}
             onClick={() => jatakaRef.current?.click()}
+            style={{ cursor: "pointer" }}
           >
-            <span className="icon">📜</span>
-            <p className="name">Jataka / Kundli</p>
-            <p className="status">{person.jatakaPath ? "Attached ✓" : "PDF or Image"}</p>
+            {isJatakaUploaded && (
+              <div className="upload-tile-tick" title="Document Uploaded ✓">
+                ✓
+              </div>
+            )}
+
+            {isJatakaUploading ? (
+              <>
+                <div className="upload-tile-spinner" />
+                <p className="name">Uploading...</p>
+                <p className="status">Please wait...</p>
+              </>
+            ) : isJatakaUploaded ? (
+              <>
+                {jatakaPreview ? (
+                  <img src={jatakaPreview} alt="Kundli Preview" className="upload-preview-thumb" />
+                ) : (
+                  <span className="icon" style={{ color: "#2ecc71" }}>📜</span>
+                )}
+                <p className="name" style={{ color: "#2ecc71", fontWeight: 700 }}>Kundli Attached ✓</p>
+                <p className="status" style={{ color: "#2ecc71", fontWeight: 600, fontSize: "10px" }}>
+                  {jatakaFileName ? `${jatakaFileName.slice(0, 16)}...` : "Attached ✓ (Tap to change)"}
+                </p>
+              </>
+            ) : (
+              <>
+                <span className="icon">📜</span>
+                <p className="name">Jataka / Kundli</p>
+                <p className="status">PDF or chart image</p>
+              </>
+            )}
+
             <input
               ref={jatakaRef}
               type="file"
+              style={{ display: "none" }}
               accept="application/pdf,image/jpeg,image/png,image/webp"
               onChange={(e) => e.target.files?.[0] && onUpload("jataka", e.target.files[0])}
             />

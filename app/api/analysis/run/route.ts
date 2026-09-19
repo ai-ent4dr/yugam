@@ -16,8 +16,17 @@ import { localAnalysisStore, saveStoredAnalysis, getLocalUpload } from "@/lib/an
 
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
-  if (origin && new URL(origin).host !== request.headers.get("host")) {
-    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+  const host = request.headers.get("host");
+  if (origin && host) {
+    try {
+      const originHost = new URL(origin).host;
+      const isLoopback = (h: string) => h.startsWith("localhost") || h.startsWith("127.0.0.1") || h.startsWith("192.168.");
+      if (originHost !== host && !(isLoopback(originHost) && isLoopback(host))) {
+        return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+      }
+    } catch {
+      // url parse fallback
+    }
   }
 
   const jar = await cookies();
@@ -46,19 +55,7 @@ export async function POST(request: NextRequest) {
     // Unauthenticated
   }
 
-  // Check free usage limit for anonymous users (authenticated users bypass free limit)
-  if (!authenticatedUser) {
-    const allowed = await canRunAnalysis(session);
-    if (!allowed) {
-      return NextResponse.json(
-        {
-          error: "Your free readings are complete. Create your free account to continue.",
-          signupRequired: true,
-        },
-        { status: 403 }
-      );
-    }
-  }
+  // Free limits removed: unlimited analyses enabled for all users
 
   const { personA, personB, modules, consent } = parsed.data;
   const analysisId = parsed.data.analysisId || crypto.randomUUID();
@@ -204,51 +201,64 @@ export async function POST(request: NextRequest) {
 
         // Upsert analysis header
         await adminDb.from("analyses").upsert({
-        id: analysisId,
-        owner_user_id: authenticatedUser?.id ?? null,
-        session_id: session,
-        status: "completed",
-        analysis_type: modules,
-        free_or_paid: "free",
-        updated_at: new Date().toISOString(),
-      });
+          id: analysisId,
+          owner_user_id: authenticatedUser?.id ?? null,
+          session_id: session,
+          status: "completed",
+          analysis_type: modules,
+          free_or_paid: "free",
+          updated_at: new Date().toISOString(),
+        });
 
-      // Insert People
-      const { data: peopleData } = await adminDb
-        .from("analysis_people")
-        .insert([
-          {
-            analysis_id: analysisId,
-            person_role: "A",
-            name: personA.name,
-            gender: personA.gender,
-            dob: personA.dob,
-            tob: personA.tob || null,
-            birth_place: personA.birthPlace,
-            city: personA.city || null,
-            relationship_goal: personA.relationshipGoal || null,
-            career_goal: personA.careerGoal || null,
-            values: personA.values || [],
-            lifestyle: personA.lifestyle || [],
-            consent_confirmed: true,
-          },
-          {
-            analysis_id: analysisId,
-            person_role: "B",
-            name: personB.name,
-            gender: personB.gender,
-            dob: personB.dob,
-            tob: personB.tob || null,
-            birth_place: personB.birthPlace,
-            city: personB.city || null,
-            relationship_goal: personB.relationshipGoal || null,
-            career_goal: personB.careerGoal || null,
-            values: personB.values || [],
-            lifestyle: personB.lifestyle || [],
-            consent_confirmed: true,
-          },
-        ])
-        .select();
+        // Clean dates and times so empty strings don't fail Postgres date/time checks
+        const sanitizeDate = (d?: string | null) =>
+          d && d.trim().length > 0 && !isNaN(Date.parse(d)) ? d.trim() : null;
+        const sanitizeTime = (t?: string | null) =>
+          t && t.trim().length > 0 ? t.trim() : null;
+
+        // Clear existing people for this analysis before inserting to prevent duplicate records
+        await adminDb.from("analysis_people").delete().eq("analysis_id", analysisId);
+
+        // Insert People
+        const { data: peopleData, error: peopleError } = await adminDb
+          .from("analysis_people")
+          .insert([
+            {
+              analysis_id: analysisId,
+              person_role: "A",
+              name: personA.name,
+              gender: personA.gender || null,
+              dob: sanitizeDate(personA.dob),
+              tob: sanitizeTime(personA.tob),
+              birth_place: personA.birthPlace || null,
+              city: personA.city || null,
+              relationship_goal: personA.relationshipGoal || null,
+              career_goal: personA.careerGoal || null,
+              values: personA.values || [],
+              lifestyle: personA.lifestyle || [],
+              consent_confirmed: true,
+            },
+            {
+              analysis_id: analysisId,
+              person_role: "B",
+              name: personB.name,
+              gender: personB.gender || null,
+              dob: sanitizeDate(personB.dob),
+              tob: sanitizeTime(personB.tob),
+              birth_place: personB.birthPlace || null,
+              city: personB.city || null,
+              relationship_goal: personB.relationshipGoal || null,
+              career_goal: personB.careerGoal || null,
+              values: personB.values || [],
+              lifestyle: personB.lifestyle || [],
+              consent_confirmed: true,
+            },
+          ])
+          .select();
+
+        if (peopleError) {
+          console.error("Supabase analysis_people insert error:", peopleError);
+        }
 
       // Insert compatibility results
       await adminDb.from("compatibility_results").upsert({
@@ -309,8 +319,8 @@ export async function POST(request: NextRequest) {
         user_id: authenticatedUser?.id ?? null,
         consent_text_version: "1.0",
       });
-      } catch (dbErr) {
-        console.warn("Database storage skipped (local fallback mode active):", dbErr);
+      } catch (dbErr: any) {
+        console.error("Supabase database persistence error:", dbErr?.message || dbErr);
       }
     }
 

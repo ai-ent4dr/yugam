@@ -1,8 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { localAnalysisStore } from "@/lib/analysis-store";
+import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { localAnalysisStore, getStoredAnalysis } from "@/lib/analysis-store";
 import { REPORT_DISCLAIMER } from "@/lib/ai/prompts";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function AnalysisDetailPage({
   params,
@@ -14,10 +17,8 @@ export default async function AnalysisDetailPage({
 
   let record: any = null;
 
-  // 1. Check local store
-  if (localAnalysisStore.has(id)) {
-    record = localAnalysisStore.get(id);
-  }
+  // 1. Check local persistent store (including anonymous entries)
+  record = getStoredAnalysis(id);
 
   // 2. Check Database
   if (!record) {
@@ -132,6 +133,59 @@ export default async function AnalysisDetailPage({
         <p style={{ maxWidth: "640px", margin: "10px auto 0", color: "var(--text-muted)" }}>
           {match.summary}
         </p>
+      </div>
+
+      {/* Couple Profiles Overview */}
+      <div className="form-grid" style={{ marginBottom: "20px" }}>
+        <div className="panel" style={{ display: "flex", gap: "16px", alignItems: "center" }}>
+          {personA?.profilePhotoPath ? (
+            <img
+              src={`/api/admin/uploads/raw?path=${encodeURIComponent(personA.profilePhotoPath)}`}
+              alt={personA.name}
+              style={{ width: "64px", height: "64px", borderRadius: "50%", objectFit: "cover", border: "2px solid #2ecc71", flexShrink: 0 }}
+            />
+          ) : (
+            <div style={{ width: "64px", height: "64px", borderRadius: "50%", background: "#10182b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", flexShrink: 0 }}>
+              👤
+            </div>
+          )}
+          <div style={{ flex: 1, fontSize: "13px" }}>
+            <span className="step-label">PERSON A</span>
+            <b style={{ fontSize: "16px", color: "var(--gold-primary)", display: "block" }}>{personA?.name || "Person A"}</b>
+            <p style={{ color: "var(--text-dim)", margin: "2px 0" }}>DOB: <b>{personA?.dob || "—"}</b> {personA?.tob ? `· ${personA.tob}` : ""}</p>
+            <p style={{ color: "var(--text-dim)" }}>Place: <b>{personA?.birthPlace || "—"}</b> {personA?.city ? `(${personA.city})` : ""}</p>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+              {personA?.profilePhotoPath && <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>✓ Photo</span>}
+              {personA?.handPhotoPath && <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>✓ Palm</span>}
+              {personA?.jatakaPath && <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>✓ Kundli</span>}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ display: "flex", gap: "16px", alignItems: "center" }}>
+          {personB?.profilePhotoPath ? (
+            <img
+              src={`/api/admin/uploads/raw?path=${encodeURIComponent(personB.profilePhotoPath)}`}
+              alt={personB.name}
+              style={{ width: "64px", height: "64px", borderRadius: "50%", objectFit: "cover", border: "2px solid #2ecc71", flexShrink: 0 }}
+            />
+          ) : (
+            <div style={{ width: "64px", height: "64px", borderRadius: "50%", background: "#10182b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", flexShrink: 0 }}>
+              👤
+            </div>
+          )}
+          <div style={{ flex: 1, fontSize: "13px" }}>
+            <span className="step-label">PERSON B</span>
+            <b style={{ fontSize: "16px", color: "var(--gold-primary)", display: "block" }}>{personB?.name || "Person B"}</b>
+            <p style={{ color: "var(--text-dim)", margin: "2px 0" }}>DOB: <b>{personB?.dob || "—"}</b> {personB?.tob ? `· ${personB.tob}` : ""}</p>
+            <p style={{ color: "var(--text-dim)" }}>Place: <b>{personB?.birthPlace || "—"}</b> {personB?.city ? `(${personB.city})` : ""}</p>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+              {personB?.profilePhotoPath && <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>✓ Photo</span>}
+              {personB?.handPhotoPath && <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>✓ Palm</span>}
+              {personB?.jatakaPath && <span style={{ fontSize: "11px", background: "rgba(46,204,113,0.15)", color: "#2ecc71", padding: "2px 6px", borderRadius: "4px" }}>✓ Kundli</span>}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="disclaimer-box">{REPORT_DISCLAIMER}</div>

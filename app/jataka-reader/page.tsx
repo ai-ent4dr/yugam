@@ -29,10 +29,11 @@ export default function JatakaReaderPage() {
     setFile(selected);
 
     // Upload immediately to private storage
+    const jatakaAnalysisId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "00000000-0000-0000-0000-000000000000";
     const formData = new FormData();
     formData.append("file", selected);
     formData.append("kind", "jataka-standalone");
-    formData.append("analysisId", "jataka-reader-" + Date.now());
+    formData.append("analysisId", jatakaAnalysisId);
     formData.append("consent", "true");
 
     try {

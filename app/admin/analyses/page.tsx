@@ -3,6 +3,11 @@ import { requireAdmin } from "@/lib/auth";
 import { createAdminClient, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getAllStoredAnalyses } from "@/lib/analysis-store";
 
+import AnalysesTable from "./analyses-table";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function AdminAnalysesPage() {
   try {
     await requireAdmin();
@@ -27,15 +32,37 @@ export default async function AdminAnalysesPage() {
           owner_user_id,
           session_id,
           compatibility_results (overall_score),
-          analysis_people (name, person_role),
-          uploads (id)
+          analysis_people (name, person_role, city, dob),
+          uploads (id, storage_path, type)
         `
         )
         .order("created_at", { ascending: false })
         .limit(200);
 
       if (data) {
-        for (const item of data) {
+        for (const rawItem of data) {
+          const item: any = rawItem;
+          item.upload_count = Array.isArray(item.uploads) ? item.uploads.length : 0;
+          const pA: any = (item.analysis_people || []).find((p: any) => p.person_role === "A");
+          const pB: any = (item.analysis_people || []).find((p: any) => p.person_role === "B");
+
+          if (Array.isArray(item.uploads)) {
+            for (const u of item.uploads) {
+              const path = u.storage_path || "";
+              if (pA) {
+                if (path.includes("person-a-profile") || (u.type === "profile_photo" && !pA.profilePhotoPath)) pA.profilePhotoPath = path;
+                if (path.includes("person-a-hand") || (u.type === "hand_photo" && !pA.handPhotoPath)) pA.handPhotoPath = path;
+                if (path.includes("person-a-jataka") || (u.type === "jataka_document" && !pA.jatakaPath)) pA.jatakaPath = path;
+              }
+              if (pB) {
+                if (path.includes("person-b-profile")) pB.profilePhotoPath = path;
+                if (path.includes("person-b-hand")) pB.handPhotoPath = path;
+                if (path.includes("person-b-jataka")) pB.jatakaPath = path;
+              }
+            }
+          }
+          item.personA = pA;
+          item.personB = pB;
           analysesMap.set(item.id, item);
         }
       }
@@ -66,8 +93,8 @@ export default async function AdminAnalysesPage() {
         session_id: rec.sessionId ?? "anonymous-session",
         compatibility_results: { overall_score: rec.match?.score ?? 70 },
         analysis_people: [
-          { name: rec.personA?.name ?? "Person A", person_role: "A" },
-          { name: rec.personB?.name ?? "Person B", person_role: "B" },
+          { name: rec.personA?.name ?? "Person A", person_role: "A", city: rec.personA?.city, dob: rec.personA?.dob },
+          { name: rec.personB?.name ?? "Person B", person_role: "B", city: rec.personB?.city, dob: rec.personB?.dob },
         ],
         upload_count: uploadCount,
       });
@@ -87,7 +114,7 @@ export default async function AdminAnalysesPage() {
         </a>
         <div className="nav-links">
           <a href="/admin">Dashboard</a>
-          <a href="/admin/users">Users</a>
+          <a href="/admin/users">Users & Profiles</a>
           <a href="/">Home</a>
         </div>
       </nav>
@@ -96,96 +123,12 @@ export default async function AdminAnalysesPage() {
         <p className="eyebrow">ANALYSES AUDIT DIRECTORY</p>
         <h1 style={{ fontSize: "32px" }}>All Submitted Couple Analyses ({analyses.length})</h1>
         <p className="lead" style={{ fontSize: "15px" }}>
-          Administrative access to submitted profiles, anonymous readings, uploaded media assets, and AI reports.
+          Instant search and administrative inspection for all submitted names, guest readings, uploaded media assets, and AI reports.
         </p>
       </div>
 
       <div className="panel">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Person A & Person B</th>
-              <th>Score</th>
-              <th>Classification</th>
-              <th>Media Uploads</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {analyses.length === 0 ? (
-              <tr>
-                <td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: "30px" }}>
-                  No analyses recorded yet. Submit a reading on the home page to inspect it here.
-                </td>
-              </tr>
-            ) : (
-              analyses.map((a) => {
-                const personA = (a.analysis_people || []).find((p: any) => p.person_role === "A");
-                const personB = (a.analysis_people || []).find((p: any) => p.person_role === "B");
-                const couple = personA && personB ? `${personA.name} & ${personB.name}` : "Couple Analysis";
-                const score = Array.isArray(a.compatibility_results)
-                  ? a.compatibility_results[0]?.overall_score
-                  : a.compatibility_results?.overall_score;
-
-                const uploadCount =
-                  a.upload_count ?? (Array.isArray(a.uploads) ? a.uploads.length : 0);
-
-                return (
-                  <tr key={a.id}>
-                    <td style={{ fontSize: "12px" }}>{new Date(a.created_at).toLocaleString()}</td>
-                    <td style={{ fontWeight: 600 }}>{couple}</td>
-                    <td style={{ color: "var(--gold-primary)", fontWeight: 700 }}>
-                      {score !== undefined ? `${score}%` : "—"}
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          padding: "2px 8px",
-                          borderRadius: "4px",
-                          background: a.owner_user_id ? "rgba(228,189,117,0.15)" : "rgba(255,255,255,0.06)",
-                          color: a.owner_user_id ? "var(--gold-primary)" : "var(--text-dim)",
-                        }}
-                      >
-                        {a.owner_user_id ? "Account" : "Anonymous"}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: "12px", color: uploadCount > 0 ? "var(--gold-hover)" : "var(--text-dim)" }}>
-                        {uploadCount > 0 ? `📷 ${uploadCount} file${uploadCount > 1 ? "s" : ""}` : "—"}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          textTransform: "capitalize",
-                          fontSize: "11px",
-                          padding: "2px 8px",
-                          borderRadius: "4px",
-                          background: a.status === "completed" ? "rgba(46, 204, 113, 0.15)" : "rgba(255, 255, 255, 0.1)",
-                          color: a.status === "completed" ? "#2ecc71" : "var(--text-muted)",
-                        }}
-                      >
-                        {a.status}
-                      </span>
-                    </td>
-                    <td>
-                      <a
-                        href={`/admin/analyses/${a.id}`}
-                        className="btn-secondary"
-                        style={{ padding: "4px 12px", fontSize: "11px" }}
-                      >
-                        Inspect Details →
-                      </a>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+        <AnalysesTable initialAnalyses={analyses} />
       </div>
 
       <footer>
